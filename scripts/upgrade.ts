@@ -3,11 +3,13 @@ const { ethers, upgrades } = require("hardhat");
 async function main() {
     const contract = await ethers.getContractFactory("Staking");
 
-    await upgrades.upgradeProxy(
+    const r = await upgrades.upgradeProxy(
         process.env.PROXY_CONTRACT,
-        contract
+        contract,
+        {txOverrides: {gasLimit: 3000000}}
     );
-    console.log("contract upgraded");
+    r.waitForDeployment();
+    console.log("contract upgraded",process.env.PROXY_CONTRACT);
 }
 
 main();

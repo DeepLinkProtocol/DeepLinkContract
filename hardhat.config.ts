@@ -9,8 +9,11 @@ require('@openzeppelin/hardhat-upgrades');
 
 
 const config: HardhatUserConfig = {
+  sourcify: {
+    enabled: true,
+  },
   solidity: {
-    version:"0.8.24",
+    version:"0.8.20",
     settings: {
       optimizer: {
         enabled: true,

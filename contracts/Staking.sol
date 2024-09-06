@@ -1,26 +1,21 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlDefaultAdminRulesUpgradeable.sol";
 import "abdk-libraries-solidity/ABDKMath64x64.sol";
-import "./lib/MachineRoles.sol";
-import "./lib/Roles.sol";
 import "./interface/IPrecompileContract.sol";
-import "./rolesManager/ReportRoleManger.sol";
-import "./slashMachineReporter/SlashMachineReporter.sol";
 
-contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashMachineReporter{
-//    using Math for uint256;
+contract Staking is Initializable, OwnableUpgradeable{
     IPrecompileContract public precompileContract;
-    uint256 public constant secondsPerBlock = 30;
+    uint256 public constant secondsPerBlock = 6;
     IERC20 public rewardToken;
     uint256 public rewardAmountPerSecond;
+    uint256 public rewardAmountFirstYear;
     uint256 public constant baseReserveAmount = 10_000 * 10**18;
 
     uint256 public totalStakedMachineMultiCalcPoint;
@@ -54,11 +49,6 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
 
     mapping(uint256 => SlashPayedInfo) public slashReportId2SlashPaidInfo;
 
-    enum ReportType{
-        Timeout,
-        Offline
-    }
-
     mapping(address => mapping(string => StakeInfo)) public address2StakeInfos;
 
 
@@ -71,13 +61,16 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
     event claimed(address indexed stakeholder, string machineId, uint256 rewardAmount,uint256 slashAmount, uint256 claimAtBlockNumber);
     event claimedAll(address indexed stakeholder, uint256 claimAtBlockNumber);
 
-    function initialize(address _initialOwner, address _rewardToken, uint256 _rewardAmountPerSecond,address _registerContract) public initializer {
+    function initialize(address _initialOwner, address _rewardToken, address _registerContract) public initializer {
         __Ownable_init(_initialOwner);
         rewardToken = IERC20(_rewardToken);
-        rewardAmountPerSecond = _rewardAmountPerSecond;
         precompileContract = IPrecompileContract(_registerContract);
         startAt = block.number;
         slashAmountOfReport = 10000*10**18;
+//        rewardAmountFirstYear = 1_009_152_000*1e18;
+        rewardAmountFirstYear = 1_000_000_000*1e18;
+
+        rewardAmountPerSecond = uint256(rewardAmountFirstYear/oneYearSeconds);
     }
 
     function setRegisterContract(address _registerContract) onlyOwner external {
@@ -120,7 +113,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
 
         address stakeholder = msg.sender;
         require(stakeholder != address(0), "invalid stakeholder address");
-        require(isBothMachineRenterAndOwner(msgToSign,substrateSig,substratePubKey,machineId), "not the renter of the machine");
+//        require(isBothMachineRenterAndOwner(msgToSign,substrateSig,substratePubKey,machineId), "not the renter of the machine");
 
         StakeInfo storage stakeInfo = address2StakeInfos[stakeholder][machineId];
         if (getSlashedAt(machineId) > 0){
@@ -129,15 +122,15 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
             address reporter = getSlashedReporter(machineId);
             require(reporter != address(0), "reporter not found");
             rewardToken.transferFrom(stakeholder, reporter, shouldSlashAmount);
-            amount -= shouldSlashAmount;
+            amount = amount - shouldSlashAmount;
             setSlashedPayedDetail(machineId, shouldSlashAmount, 0);
         } else {
             require(stakeInfo.startAtBlockNumber == 0, "machine already staked");
             require(stakeInfo.endAtBlockNumber == 0, "machine staked not end");
         }
 
-        stakeholder2Reserved[stakeholder] += amount;
         if (amount > 0) {
+            stakeholder2Reserved[stakeholder] += amount;
             rewardToken.transferFrom(stakeholder, address(this), amount);
         }
 
@@ -153,6 +146,8 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
 
         machineId2Address[machineId] = stakeholder;
         totalStakedMachineMultiCalcPoint+= calcPoint;
+
+        require(reportStaking(msgToSign,substrateSig,substratePubKey,machineId)== true,"report staking failed");
         emit staked(stakeholder, machineId, block.number);
     }
 
@@ -164,53 +159,77 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
     function getRentDuration(string memory msgToSign,string memory substrateSig,string memory substratePubKey,uint256 lastClaimAt,uint256 slashAt, string memory machineId) public view returns (uint256) {
         return precompileContract.getRentDuration(msgToSign,substrateSig,substratePubKey,lastClaimAt,slashAt,machineId);
     }
+    function getDlcMachineRentDuration(uint256 lastClaimAt,uint256 slashAt, string memory machineId) public view returns (uint256 rentDuration){
+        return precompileContract.getDlcMachineRentDuration(lastClaimAt,slashAt,machineId);
 
-    function isBothMachineRenterAndOwner(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) public view returns(bool){
-        return precompileContract.isBothMachineRenterAndOwner(msgToSign,substrateSig,substratePubKey,machineId);
     }
 
-    function reportStaking(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) public view returns(bool){
-        return precompileContract.reportStaking(msgToSign,substrateSig,substratePubKey,machineId);
+    function reportStaking(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) public returns(bool){
+        return precompileContract.reportDlcStaking(msgToSign,substrateSig,substratePubKey,machineId);
+    }
+
+    function reportEndStaking(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) public returns(bool){
+        return precompileContract.reportDlcEndStaking(msgToSign,substrateSig,substratePubKey,machineId);
     }
 
     function getSlashedAt(string memory machineId) public view returns(uint256){
-        uint256 slashReportId =  precompileContract.getSlashedReportId(machineId);
-        if (slashReportId == 0){
+        if (!precompileContract.isSlashed(machineId)){
             return 0;
         }
-        SlashPayedInfo storage slashPayedInfo = slashReportId2SlashPaidInfo[slashReportId];
-        if (slashPayedInfo.totalPayedAmount == slashAmountOfReport){
+
+        uint256 slashReportId = getDlcMachineSlashedReportId(machineId);
+
+        if (isPaidSlashed(slashReportId)){
             return 0;
         }
-        return precompileContract.getSlashedAt(machineId);
+
+        return precompileContract.getDlcMachineSlashedAt(machineId);
     }
 
     function getLeftSlashedAmount(string memory machineId) public view returns(uint256){
-        uint256 slashReportId =  precompileContract.getSlashedReportId(machineId);
-        SlashPayedInfo storage slashPayedInfo = slashReportId2SlashPaidInfo[slashReportId];
-        return slashAmountOfReport - slashPayedInfo.totalPayedAmount;
+        if (getSlashedAt(machineId) > 0){
+            uint256 slashReportId =  precompileContract.getDlcMachineSlashedReportId(machineId);
+            SlashPayedInfo storage slashPayedInfo = slashReportId2SlashPaidInfo[slashReportId];
+            return slashAmountOfReport - slashPayedInfo.totalPayedAmount;
+        }
+        return 0;
     }
 
     function setSlashedPayedDetail(string memory machineId, uint256 fromReservedAmount, uint256 fromRewardAmount) internal {
         uint256 total = fromReservedAmount+fromRewardAmount;
-        uint256 slashReportId =  precompileContract.getSlashedReportId(machineId);
+        uint256 slashReportId = precompileContract.getDlcMachineSlashedReportId(machineId);
         SlashPayedInfo storage slashPayedInfo = slashReportId2SlashPaidInfo[slashReportId];
-        slashPayedInfo.details.push(SlashPayedDetail({
+        SlashPayedDetail[] storage paidDetails = slashPayedInfo.details;
+        paidDetails.push(SlashPayedDetail({
             fromReservedAmount: fromReservedAmount,
             fromRewardAmount: fromRewardAmount,
             totalPayedAmount: slashPayedInfo.totalPayedAmount + total,
             at: block.number
         }));
+        slashPayedInfo.details = paidDetails;
         slashPayedInfo.totalPayedAmount += total;
         slashReportId2SlashPaidInfo[slashReportId] = slashPayedInfo;
     }
 
-    function getSlashedReportId(string memory machineId) external view returns(uint256){
-        return precompileContract.getSlashedReportId(machineId);
+    function getDlcMachineSlashedReportId(string memory machineId) public view returns(uint256){
+        if (!precompileContract.isSlashed(machineId)){
+            return 0;
+        }
+        return uint256(precompileContract.getDlcMachineSlashedReportId(machineId));
     }
 
     function getSlashedReporter(string memory machineId) public view returns(address){
-        return precompileContract.getSlashedReporter(machineId);
+        uint256 slashReportId = getDlcMachineSlashedReportId(machineId);
+        bool isPaid = isPaidSlashed(slashReportId);
+        if (isPaid){
+            return address(0x0);
+        }
+        return precompileContract.getDlcMachineSlashedReporter(machineId);
+    }
+
+    function isPaidSlashed(uint256 slashReportId) internal view returns(bool) {
+        SlashPayedInfo storage slashPayedInfo = slashReportId2SlashPaidInfo[slashReportId];
+        return slashPayedInfo.totalPayedAmount == slashAmountOfReport;
     }
 
 
@@ -220,10 +239,13 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         }
         uint256 slashedAt = getSlashedAt(machineId);
         uint256 totalRewardDuration = _getStakeHolderRentDuration(msgToSign,substrateSig,substratePubKey,stakeInfo.lastClaimAtBlockNumber,slashedAt,machineId);
+        if (totalRewardDuration == 0){
+            return 0;
+        }
 
-        uint256 rewardPerSecond = rewardPerSecond();
-        uint256 rentDuration = _getDLCUserRentDuration(msgToSign,substrateSig,substratePubKey,stakeInfo.lastClaimAtBlockNumber,slashedAt,machineId);
-        uint256 totalBaseReward = rewardPerSecond * (totalRewardDuration-rentDuration) + rewardPerSecond* 13/10 *rentDuration;
+        uint256 rewardPerSecond_ = rewardPerSecond();
+        uint256 rentDuration = getDlcMachineRentDuration(stakeInfo.lastClaimAtBlockNumber,slashedAt,machineId);
+        uint256 totalBaseReward = rewardPerSecond_ * (totalRewardDuration-rentDuration) + rewardPerSecond_* 13/10 *rentDuration;
 
         uint256 _totalStakedMachineMultiCalcPoint = totalStakedMachineMultiCalcPoint;
         if (slashedAt  > 0){
@@ -248,7 +270,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         uint256 totalRewardAmount = _getTotalRewardAmount(msgToSign,substrateSig,substratePubKey,machineId,stakeInfo);
         uint256 slashAmount = getLeftSlashedAmount(machineId);
         if (slashAmount > 0){
-            if ( totalRewardAmount >= slashAmount){
+            if (totalRewardAmount >= slashAmount){
                 return totalRewardAmount - slashAmount;
             }else{
                 return 0;
@@ -261,9 +283,8 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         return getRentDuration(msgToSign,substrateSig,substratePubKey, lastClaimAt,slashAt,machineId);
     }
 
-    function _getDLCUserRentDuration(string memory msgToSign,string memory substrateSig,string memory substratePubKey,uint256 lastClaimAt,uint256 slashAt, string memory machineId) internal view returns(uint256) {
-        // todo
-        return getRentDuration(msgToSign,substrateSig,substratePubKey, lastClaimAt,slashAt,machineId);
+    function _getDLCUserRentDuration(uint256 lastClaimAt,uint256 slashAt, string memory machineId) public view returns(uint256) {
+        return getDlcMachineRentDuration(lastClaimAt,slashAt,machineId);
     }
 
     function getReward(string memory msgToSign, string memory substrateSig,string memory substratePubKey,string memory machineId) external view returns (uint256) {
@@ -295,13 +316,16 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
                     paidSlashAmountFromReserved = leftSlashAmountAfterPayedReward;
                     stakeholder2Reserved[stakeholder] = reservedAmount-leftSlashAmountAfterPayedReward;
                 }else{
-                    leftSlashAmountAfterPayedReward = reservedAmount;
+                    paidSlashAmountFromReserved = reservedAmount;
                     stakeholder2Reserved[stakeholder] = 0;
                 }
                 address reporter = getSlashedReporter(machineId);
                 require(reporter != address(0), "reporter not found");
                 rewardToken.transfer(reporter, paidSlashAmountFromReserved + rewardAmount);
                 setSlashedPayedDetail(machineId, paidSlashAmountFromReserved, rewardAmount);
+                if (getSlashedAt(machineId) == 0){
+                    require(reportStaking(msgToSign,substrateSig,substratePubKey,machineId));
+                }
             }
         }
 
@@ -333,7 +357,7 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         );
 
         require(machineId2Address[machineId]!= address(0), "machine not found");
-        if (getSlashedAt(machineId)){
+        if (getSlashedAt(machineId)==0){
             require((block.number - address2StakeInfos[stakeholder][machineId].startAtBlockNumber)*secondsPerBlock >= 30*24*60*60, "staking period must more than 30 days");
         }
         _unStakeAndClaim(msgToSign,substrateSig,substratePubKey,machineId,stakeholder);
@@ -349,9 +373,10 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
 
         uint256 currentTime = block.number;
         StakeInfo storage stakeInfo =  address2StakeInfos[stakeholder][machineId];
-        stakeInfo .endAtBlockNumber = currentTime;
+        stakeInfo.endAtBlockNumber = currentTime;
         machineId2Address[machineId]= address(0);
-        totalStakedMachineMultiCalcPoint -= stakeInfo .calcPoint;
+        totalStakedMachineMultiCalcPoint -= stakeInfo.calcPoint;
+        require(reportEndStaking(msgToSign,substrateSig,substratePubKey,machineId)==true,"report end staking failed");
         emit unStaked(msg.sender,machineId, currentTime);
     }
 
@@ -363,5 +388,9 @@ contract Staking is Initializable, OwnableUpgradeable,ReporterRoleManager,SlashM
         address stakeholder = machineId2Address[machineId];
         StakeInfo storage stakeInfo = address2StakeInfos[stakeholder][machineId];
         return stakeholder != address(0) && stakeInfo.startAtBlockNumber > 0 && stakeInfo.endAtBlockNumber == 0 &&getSlashedAt(machineId) == 0;
+    }
+
+    function version() public pure returns(uint256)  {
+        return 1;
     }
 }

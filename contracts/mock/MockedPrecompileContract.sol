@@ -1,6 +1,6 @@
 
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "../interface/IPrecompileContract.sol";
 
@@ -19,23 +19,32 @@ contract MockedAIProjectRegister is IPrecompileContract {
         return 1000;
     }
 
-    function isBothMachineRenterAndOwner(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) external pure returns(bool){
+
+    function reportDlcStaking(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) external view returns(bool){
         return true;
     }
 
-    function reportStaking(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) external view returns(bool){
+    function reportDlcEndStaking(string memory msgToSign,string memory substrateSig,string memory substratePubKey,string memory machineId) external view returns(bool){
         return true;
     }
 
 
-    function getSlashedAt(string memory machineId) external pure returns(uint256){
+    function getDlcMachineSlashedAt(string memory machineId) external pure returns(uint256){
         return 0;
     }
 
-    function getSlashedReportId(string memory machineId) external pure returns(uint256){
-        return 0;
+    function getDlcMachineSlashedReportId(string memory machineId) external pure returns(uint256){
+        return 1;
     }
-    function getSlashedReporter(string memory _machineId) external pure returns(address){
+    function getDlcMachineSlashedReporter(string memory _machineId) external pure returns(address){
         return address(0);
+    }
+
+    function getDlcMachineRentDuration(uint256 lastClaimAt,uint256 slashAt, string memory machineId) external view returns (uint256 rentDuration){
+        return 500;
+    }
+
+    function isSlashed(string memory machineId) external view returns (bool slashed){
+        return false;
     }
 }
