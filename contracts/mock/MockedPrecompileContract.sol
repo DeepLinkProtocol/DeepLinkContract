@@ -30,7 +30,7 @@ contract MockedAIProjectRegister is IPrecompileContract {
 
 
     function getDlcMachineSlashedAt(string memory machineId) external pure returns(uint256){
-        return 0;
+        return 1;
     }
 
     function getDlcMachineSlashedReportId(string memory machineId) external pure returns(uint256){

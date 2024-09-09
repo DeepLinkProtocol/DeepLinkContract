@@ -44,7 +44,7 @@ contract Staking is Initializable, OwnableUpgradeable{
 
     struct SlashPayedInfo{
         uint256 totalPayedAmount;
-        SlashPayedDetail[] details;
+        address to;
     }
 
     mapping(uint256 => SlashPayedInfo) public slashReportId2SlashPaidInfo;
@@ -52,7 +52,6 @@ contract Staking is Initializable, OwnableUpgradeable{
     mapping(address => mapping(string => StakeInfo)) public address2StakeInfos;
 
 
-    event baseRewardAmountPerSecondChanged(uint256 baseRewardAmountPerSecond);
     event nonlinearCoefficientChanged(uint256 nonlinearCoefficient);
 
 
@@ -60,6 +59,8 @@ contract Staking is Initializable, OwnableUpgradeable{
     event unStaked(address indexed stakeholder, string machineId, uint256 unStakeAtBlockNumber);
     event claimed(address indexed stakeholder, string machineId, uint256 rewardAmount,uint256 slashAmount, uint256 claimAtBlockNumber);
     event claimedAll(address indexed stakeholder, uint256 claimAtBlockNumber);
+    event rewardTokenSet(address indexed addr);
+    event slashPayedDetail(string machineId, uint256 fromReservedAmount, uint256 fromRewardAmount, uint256 totalPayedAmount, uint256 reportId,address to);
 
     function initialize(address _initialOwner, address _rewardToken, address _registerContract) public initializer {
         __Ownable_init(_initialOwner);
@@ -89,13 +90,7 @@ contract Staking is Initializable, OwnableUpgradeable{
 
     function setRewardToken(address token) onlyOwner external  {
         rewardToken = IERC20(token);
-    }
-
-    function setBaseRewardAmountPerSecond(
-        uint256 _rewardAmountPerSecond
-    ) public onlyOwner {
-        rewardAmountPerSecond = _rewardAmountPerSecond;
-        emit baseRewardAmountPerSecondChanged(_rewardAmountPerSecond);
+        emit rewardTokenSet(token);
     }
 
     function setNonlinearCoefficient(uint256 value) public onlyOwner {
@@ -113,7 +108,6 @@ contract Staking is Initializable, OwnableUpgradeable{
 
         address stakeholder = msg.sender;
         require(stakeholder != address(0), "invalid stakeholder address");
-//        require(isBothMachineRenterAndOwner(msgToSign,substrateSig,substratePubKey,machineId), "not the renter of the machine");
 
         StakeInfo storage stakeInfo = address2StakeInfos[stakeholder][machineId];
         if (getSlashedAt(machineId) > 0){
@@ -123,7 +117,7 @@ contract Staking is Initializable, OwnableUpgradeable{
             require(reporter != address(0), "reporter not found");
             rewardToken.transferFrom(stakeholder, reporter, shouldSlashAmount);
             amount = amount - shouldSlashAmount;
-            setSlashedPayedDetail(machineId, shouldSlashAmount, 0);
+            setSlashedPayedDetail(machineId, shouldSlashAmount, 0, reporter);
         } else {
             require(stakeInfo.startAtBlockNumber == 0, "machine already staked");
             require(stakeInfo.endAtBlockNumber == 0, "machine staked not end");
@@ -195,20 +189,14 @@ contract Staking is Initializable, OwnableUpgradeable{
         return 0;
     }
 
-    function setSlashedPayedDetail(string memory machineId, uint256 fromReservedAmount, uint256 fromRewardAmount) internal {
+    function setSlashedPayedDetail(string memory machineId, uint256 fromReservedAmount, uint256 fromRewardAmount, address to) internal {
         uint256 total = fromReservedAmount+fromRewardAmount;
         uint256 slashReportId = precompileContract.getDlcMachineSlashedReportId(machineId);
         SlashPayedInfo storage slashPayedInfo = slashReportId2SlashPaidInfo[slashReportId];
-        SlashPayedDetail[] storage paidDetails = slashPayedInfo.details;
-        paidDetails.push(SlashPayedDetail({
-            fromReservedAmount: fromReservedAmount,
-            fromRewardAmount: fromRewardAmount,
-            totalPayedAmount: slashPayedInfo.totalPayedAmount + total,
-            at: block.number
-        }));
-        slashPayedInfo.details = paidDetails;
         slashPayedInfo.totalPayedAmount += total;
+        slashPayedInfo.to = to;
         slashReportId2SlashPaidInfo[slashReportId] = slashPayedInfo;
+        emit slashPayedDetail(machineId, fromReservedAmount, fromRewardAmount, slashPayedInfo.totalPayedAmount, slashReportId, to);
     }
 
     function getDlcMachineSlashedReportId(string memory machineId) public view returns(uint256){
@@ -306,7 +294,7 @@ contract Staking is Initializable, OwnableUpgradeable{
                 address reporter = getSlashedReporter(machineId);
                 require(reporter != address(0), "reporter not found");
                 rewardToken.transfer(reporter, leftSlashAmount);
-                setSlashedPayedDetail(machineId, 0, leftSlashAmount);
+                setSlashedPayedDetail(machineId, 0, leftSlashAmount,reporter);
             }else {
                 rewardAmount = 0;
                 uint256 leftSlashAmountAfterPayedReward = leftSlashAmount-rewardAmount;
@@ -322,7 +310,7 @@ contract Staking is Initializable, OwnableUpgradeable{
                 address reporter = getSlashedReporter(machineId);
                 require(reporter != address(0), "reporter not found");
                 rewardToken.transfer(reporter, paidSlashAmountFromReserved + rewardAmount);
-                setSlashedPayedDetail(machineId, paidSlashAmountFromReserved, rewardAmount);
+                setSlashedPayedDetail(machineId, paidSlashAmountFromReserved, rewardAmount, reporter);
                 if (getSlashedAt(machineId) == 0){
                     require(reportStaking(msgToSign,substrateSig,substratePubKey,machineId));
                 }
@@ -357,7 +345,7 @@ contract Staking is Initializable, OwnableUpgradeable{
         );
 
         require(machineId2Address[machineId]!= address(0), "machine not found");
-        if (getSlashedAt(machineId)==0){
+        if (getSlashedAt(machineId) == 0){
             require((block.number - address2StakeInfos[stakeholder][machineId].startAtBlockNumber)*secondsPerBlock >= 30*24*60*60, "staking period must more than 30 days");
         }
         _unStakeAndClaim(msgToSign,substrateSig,substratePubKey,machineId,stakeholder);
