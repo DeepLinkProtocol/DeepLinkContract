@@ -4,7 +4,7 @@
 testnet call function endpoint:
 https://blockscout-testnet.dbcscan.io/address/0xd99B9dDD026D13886dbcc1bfBe7e8bb2195B1185?tab=write_proxy
 testnet DLC staking contract address：0x5F953D181ED266a925245d26Cc252Ad937001815，
-testnet DLC token contract address：0x82b1a3d719dDbFDa07AD1312c3063a829e1e66F1
+testnet DLC token contract address：0xd6a0843e7c99357ca5bA3525A0dB92F8E5817c07
 ### Staking
     1. Rent your own machine in the DBC Mainnet/Testnet wallet
     2. Call stake(..) function in the DLC staking contract on DBC mainnet evm/testnet evm
