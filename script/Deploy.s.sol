@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Script} from "forge-std/Script.sol";
-import {StakingV4} from "../src/Staking.sol";
+import {StakingV5} from "../src/Staking.sol";
 import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 
 contract Deploy is Script {
@@ -29,7 +29,7 @@ contract Deploy is Script {
         address proxy = Upgrades.deployUUPSProxy(
             "Staking.sol:StakingV4",
             abi.encodeCall(
-                StakingV4.initialize,
+                StakingV5.initialize,
                 (
                     msg.sender,
                     address(0xd6a0843e7c99357ca5bA3525A0dB92F8E5817c07),
